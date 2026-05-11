@@ -58,7 +58,7 @@
     "links": [
       {
         "label": "Dashboard",
-        "href": "https://app.altheia.xyz"
+        "href": "https://altheia.xyz/dashboard"
       },
       {
         "label": "GitHub",
@@ -68,7 +68,7 @@
     "primary": {
       "type": "button",
       "label": "Get started",
-      "href": "/quickstart"
+      "href": "https://altheia.xyz"
     }
   },
   "footer": {
