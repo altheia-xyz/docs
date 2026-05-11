@@ -1,0 +1,52 @@
+---
+title: "Altheia"
+description: "The SDK entry point. Constructor and config."
+---
+
+```ts
+import { Altheia } from "@altheia-xyz/sdk";
+
+const altheia = new Altheia(config);
+```
+
+## `new Altheia(config)`
+
+### Config
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `agentPda` | `string` | — | Required. The agent's `AgentAccount` PDA from the dashboard. |
+| `agentId` | `string` | — | Legacy DB UUID. Use `agentPda` for new code. |
+| `apiKey` | `string` | — | Required in production. Backend returns 401 without it. |
+| `endpoint` | `string` | `https://api.altheia.xyz` | Override only for self-hosted. |
+| `failureMode` | `"open" \| "closed"` | `"open"` | What to do when the backend is unreachable. |
+| `timeoutMs` | `number` | `1500` | Per-request timeout for `check` and `report`. |
+| `cacheTTL` | `number` | `0` | Cache repeat-action decisions in seconds. `0` disables. |
+
+You must pass at least one of `agentPda` or `agentId`. If both are set, `agentPda` wins.
+
+### Failure mode
+
+- `"open"` (default): on backend timeout or error, return `allowed: true` with `reason: "sdk_unreachable_failopen"`. Swig's on-chain scope is the floor that catches over-cap actions. Use this when uptime matters more than strict enforcement.
+- `"closed"`: throw `AltheiaConnectionError`. Use this for agents that move money — halt is safer than swing.
+
+### Example
+
+```ts
+const altheia = new Altheia({
+  agentPda: process.env.ALTHEIA_AGENT_PDA!,
+  apiKey: process.env.ALTHEIA_API_KEY!,
+  failureMode: "closed",
+  timeoutMs: 5000,
+});
+```
+
+## Methods
+
+| Method | What it does |
+| --- | --- |
+| [`guard(action, fn)`](/sdk/guard) | Check policy, run if allowed, audit the result. |
+| [`check(action)`](/sdk/check) | Check policy without running anything. |
+| [`report(event)`](/sdk/report) | Attach an outcome to an audit row. |
+| `ping(status)` | Send a heartbeat. Best-effort. |
+| `policy()` | Fetch the current policy in scope for this agent. |

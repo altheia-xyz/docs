@@ -1,0 +1,74 @@
+---
+title: "guard()"
+description: "Check policy, run the action, write the audit row."
+---
+
+```ts
+guard<T>(action: ActionDescriptor, fn: () => Promise<T>): Promise<T>
+```
+
+The main entry point. Wrap your agent's signing function with `guard()` and Altheia handles policy enforcement and auditing around it.
+
+## What it does
+
+1. Calls `/sdk/agent_check` with the action.
+2. If allowed: runs `fn()`. If denied: throws `PolicyDeniedError` before `fn()` runs.
+3. After `fn()` resolves, calls `/sdk/agent_report` with the outcome. If `fn()` returned a string, it is passed through as the on-chain `tx_signature`.
+
+The report call is best-effort. A failed report does not affect the return value.
+
+## Parameters
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `action` | `ActionDescriptor` | What you intend to do. Used for policy check + audit. |
+| `fn` | `() => Promise<T>` | The function that actually executes the action. |
+
+### `ActionDescriptor`
+
+```ts
+type ActionDescriptor = {
+  type: "transfer" | "swap" | "sign" | "invoke" | "inference" | "custom";
+  amount?: number;       // in human units (50 USDC, 0.5 SOL)
+  asset?: string;        // mint pubkey or "SOL" / "USDC"
+  target?: string;       // destination address or program ID
+  metadata?: Record<string, unknown>;
+};
+```
+
+## Returns
+
+Whatever `fn()` returns. If `fn()` returns a string, it is treated as a Solana tx signature and attached to the audit row.
+
+## Throws
+
+- `PolicyDeniedError` — policy denied the action. `fn()` did not run.
+- `AltheiaConnectionError` — backend was unreachable AND `failureMode` is `"closed"`.
+- Any error thrown by `fn()` itself.
+
+## Example
+
+```ts
+import { Altheia, PolicyDeniedError } from "@altheia-xyz/sdk";
+
+try {
+  const sig = await altheia.guard(
+    { type: "swap", asset: "SOL", amount: 0.05, target: ORCA_PROGRAM },
+    async () => {
+      const tx = await buildOrcaSwap(0.05);
+      return await wallet.sendTransaction(tx, connection); // returns signature
+    },
+  );
+  console.log("landed:", sig);
+} catch (err) {
+  if (err instanceof PolicyDeniedError) {
+    console.log("denied:", err.reasonCode, err.message);
+  } else {
+    throw err;
+  }
+}
+```
+
+## When not to use `guard()`
+
+If your action does not sign anything on-chain (a no-op, a read, an inference call) you usually don't need `guard()`. Use [`check()`](/sdk/check) if you want a policy decision without side effects.

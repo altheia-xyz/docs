@@ -1,0 +1,61 @@
+---
+title: "report()"
+description: "Attach an outcome to an audit row."
+---
+
+```ts
+report(event: {
+  action: ActionDescriptor;
+  outcome: "success" | "failure";
+  audit_event_id?: string;
+  detail?: string;
+  tx_signature?: string;
+}): Promise<void>
+```
+
+`guard()` calls `report()` for you. You only call it directly when you do the check yourself with [`check()`](/sdk/check) and execute separately.
+
+## When you'd use it directly
+
+```ts
+const decision = await altheia.check(action);
+if (!decision.allowed) return;
+
+try {
+  const sig = await runIt();
+  await altheia.report({
+    action,
+    outcome: "success",
+    audit_event_id: decision.audit_event_id,
+    tx_signature: sig,
+  });
+} catch (err) {
+  await altheia.report({
+    action,
+    outcome: "failure",
+    audit_event_id: decision.audit_event_id,
+    detail: err instanceof Error ? err.message : String(err),
+  });
+  throw err;
+}
+```
+
+Pass the `audit_event_id` from the `check()` decision so the report attaches to the same row instead of creating a new one.
+
+## Parameters
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `action` | `ActionDescriptor` | Same shape you used in `check()`. |
+| `outcome` | `"success" \| "failure"` | Whether the action ran. |
+| `audit_event_id` | `string` | UUID from the `check()` decision. Optional. |
+| `detail` | `string` | Free-form notes. Surfaced in the chronicle. |
+| `tx_signature` | `string` | Solana signature. Surfaced as a Solscan link in the chronicle. |
+
+## Best-effort
+
+`report()` will not throw. If the network is unreachable, it logs a warning and resolves. Audit completeness is backstopped by the backend's reconciliation cron, which sweeps recent transactions on the agent's session key and fills in missing reports.
+
+## Don't double-report
+
+`guard()` already reports. Calling `report()` after `guard()` for the same action will create a duplicate row.
