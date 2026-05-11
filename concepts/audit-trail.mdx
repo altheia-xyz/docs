@@ -1,0 +1,47 @@
+---
+title: "Audit trail"
+description: "Every decision, anchored on-chain."
+---
+
+Every call to `guard()` or `check()` produces an **audit event**. The SDK calls `/sdk/agent_check`, Altheia decides, the decision is logged, and the call returns. If the action runs, `guard()` calls `/sdk/agent_report` to attach the outcome and the on-chain tx signature.
+
+<Frame>
+  <img src="/images/audit-trail.png" alt="Chronicle: audit events for an agent" />
+</Frame>
+
+## What's recorded
+
+| Field | Meaning |
+| --- | --- |
+| `agent_pda` | Which agent acted. |
+| `action` | The `ActionDescriptor` (type, asset, amount, target). |
+| `allowed` | `true` if policy allowed, `false` if denied. |
+| `reason_code` | Machine-readable: `over_per_tx_cap`, `scope_violation`, `agent_paused`, `over_per_day_cap`, ... |
+| `tx_signature` | The Solana signature if the action landed (set by `report()`). |
+| `created_at` | UTC timestamp. |
+
+## On-chain anchoring
+
+Hourly, Altheia commits a Merkle root of the period's audit events to the operator account via `commit_audit_root`. The root is verifiable from the operator's `lastAuditRoot` field on Solscan. This means:
+
+- An auditor can ask Altheia for events between two slots, hash them in the same canonical order, and compare the root to what's on-chain.
+- Altheia cannot rewrite history without invalidating the chain of roots.
+
+## Denials are loud
+
+Every denial emits a Solana memo at the same time the audit row is written. So a denied action is visible:
+- In the dashboard.
+- In your Slack webhook, if you configured one.
+- On Solscan, attached to the agent's account.
+
+## Reading the audit trail
+
+Three ways:
+
+1. **Dashboard** — open an agent and scroll the chronicle.
+2. **Solscan** — open the agent's PDA. Memos are denial events; `audit_root` events are hourly roots.
+3. **HTTP** — `GET /v1/agents/:agent_pda/events?since=<iso>` returns the same data the dashboard renders (auth: operator JWT).
+
+<Card title="Integrate the SDK" icon="arrow-right" href="/guides/integrate-sdk" horizontal>
+  Hands-on: wrap your first agent action.
+</Card>

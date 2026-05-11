@@ -1,0 +1,42 @@
+---
+title: "Agents"
+description: "What an Altheia agent is and how its identity lives on Solana."
+---
+
+An **agent** is a registered AI identity owned by an operator. It has a Solana PDA, a Swig session key, a policy, and a status.
+
+## Identity
+
+Each agent is an `AgentAccount` PDA derived from your operator's wallet and a 32-byte agent ID:
+
+```
+seeds = ["agent", operator_pda, agent_id_bytes]
+program = AkKx54ZmuP17r1sXsKr7mxe3dXJ5RMqsSH2zf8QGZ39C
+```
+
+This PDA is the canonical reference everywhere: in the SDK (`agentPda` config option), in the dashboard URL, in audit rows, in on-chain memos.
+
+## Lifecycle
+
+| Status | Meaning | Reversible? |
+| --- | --- | --- |
+| `active` | Agent can sign actions that pass policy. | yes (pause/revoke) |
+| `paused` | Signing blocked. State preserved. | yes (unpause) |
+| `revoked` | Signing blocked. Session key destroyed. | **no** |
+| `archived` | Hidden from default views. | yes (unarchive) |
+
+Pause when you want to halt activity while you investigate. Revoke when you're sure the agent should never sign again.
+
+## What an agent owns
+
+- A **Swig session key** that signs on its behalf, scoped by policy.
+- A **policy commitment** (sha256 of the canonical policy) stored on-chain. The full policy is in Altheia's database; the hash on Solana is the source of truth for "what policy was in effect when this signed."
+- A **model commitment** (sha256 of the model identifier you registered with).
+
+## Why PDAs
+
+Every agent is reachable on Solscan. Policy commitments, status transitions, and audit-root anchors are all on-chain events under the agent's PDA. You can prove "this agent had this policy at this slot" without trusting Altheia's database.
+
+<Card title="Next: policies" icon="arrow-right" href="/concepts/policies" horizontal>
+  How per-tx caps, per-day caps, and program scope map to Swig constraints.
+</Card>

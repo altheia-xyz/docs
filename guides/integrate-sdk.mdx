@@ -1,0 +1,103 @@
+---
+title: "Integrate the SDK"
+description: "Wrap a signing path with altheia.guard()."
+---
+
+## Install
+
+```bash
+pnpm add @altheia-xyz/sdk @solana/web3.js
+```
+
+Node 20+. Browser builds work in modern bundlers (Vite, Webpack 5+).
+
+## Initialize
+
+```ts
+import { Altheia } from "@altheia-xyz/sdk";
+
+const altheia = new Altheia({
+  agentPda: process.env.ALTHEIA_AGENT_PDA!,
+  apiKey: process.env.ALTHEIA_API_KEY!,
+  failureMode: "closed",
+  timeoutMs: 5000,
+});
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `agentPda` | — | Required. PDA from the dashboard. |
+| `apiKey` | — | Required in production. Backend returns 401 without it. |
+| `endpoint` | `https://api.altheia.xyz` | Override only for self-hosted. |
+| `failureMode` | `"open"` | `"closed"` throws if backend is unreachable. Recommended for production. |
+| `timeoutMs` | `1500` | Per-request timeout for `check` / `report`. |
+| `cacheTTL` | `0` | Cache repeat-action decisions in seconds. |
+
+## Pattern: wrap your signing function
+
+`guard()` does three things, in order:
+
+1. Calls `/sdk/agent_check` with the action.
+2. If allowed, runs your function. If denied, throws `PolicyDeniedError`.
+3. Calls `/sdk/agent_report` with the outcome and tx signature.
+
+```ts
+import { PolicyDeniedError } from "@altheia-xyz/sdk";
+
+async function sendUsdc(to: string, amount: number) {
+  const sig = await altheia.guard(
+    { type: "transfer", asset: "USDC", amount, target: to },
+    async () => {
+      const tx = await buildTransferTx(to, amount);
+      const sig = await wallet.sendTransaction(tx, connection);
+      return sig; // return the signature so it lands in the audit row
+    },
+  );
+  return sig;
+}
+```
+
+The `ActionDescriptor` is the structured shape Altheia checks against policy:
+
+```ts
+type ActionDescriptor = {
+  type: "transfer" | "swap" | "sign" | "invoke" | "inference" | "custom";
+  amount?: number;
+  asset?: string;          // mint pubkey or symbol "SOL" / "USDC"
+  target?: string;         // destination address or program ID
+  metadata?: Record<string, unknown>;
+};
+```
+
+## Handling denials
+
+```ts
+try {
+  await sendUsdc(to, 1200);
+} catch (err) {
+  if (err instanceof PolicyDeniedError) {
+    // err.reasonCode: "over_per_tx_cap" | "scope_violation" | "agent_paused" | ...
+    // err.message: human-readable reason
+    return notifyOperator(err);
+  }
+  throw err;
+}
+```
+
+Denials are normal control flow. They are not bugs. Most agents will hit a denial occasionally — that's the system working.
+
+## Health check
+
+`ping()` sends a heartbeat so the dashboard knows the agent is alive:
+
+```ts
+setInterval(() => {
+  altheia.ping({ status: "healthy" }).catch(() => undefined);
+}, 60_000);
+```
+
+Best-effort. If it fails, your agent still runs.
+
+<Card title="Full working example" icon="github" href="/guides/orca-swap-example" horizontal>
+  An Orca swap agent with six scenarios, including the failure modes.
+</Card>

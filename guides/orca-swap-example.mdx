@@ -1,0 +1,71 @@
+---
+title: "Example: Orca swap agent"
+description: "A working agent that swaps SOL → USDC on Orca with policy enforcement."
+---
+
+A complete example that runs six scenarios against a real agent on Solana, showing how `guard()` behaves when an action is allowed, denied, paused, or revoked.
+
+<Card title="Source on GitHub" icon="github" href="https://github.com/altheia-xyz/sdk/tree/main/examples/orca-swap-agent" horizontal>
+  `examples/orca-swap-agent` in the SDK repo.
+</Card>
+
+## What it does
+
+1. Loads your operator key, agent PDA, and API key from `.env`.
+2. Constructs an Orca Whirlpools swap (SOL → USDC).
+3. Wraps the swap in `altheia.guard()`.
+4. Runs six scenarios with an Enter prompt between each so you can watch.
+
+## The six scenarios
+
+| # | Setup | Expected |
+| --- | --- | --- |
+| 1 | Swap 0.05 SOL → USDC, under all caps. | **Allowed.** Lands on-chain. |
+| 2 | Swap 1 SOL → USDC, over per-tx cap. | **Denied** with `over_per_tx_cap`. |
+| 3 | Swap 0.05 SOL repeatedly until rolling 24h cap is hit. | **Denied** with `over_per_day_cap`. |
+| 4 | Swap on a non-allowlisted program. | **Denied** with `scope_violation`. |
+| 5 | Pause the agent in the dashboard, then try a swap. | **Denied** with `agent_paused`. |
+| 6 | Revoke the agent, then try a swap. | **Denied** with `agent_revoked`. SDK does not retry. |
+
+## Setup
+
+```bash
+git clone https://github.com/altheia-xyz/sdk.git
+cd sdk/examples/orca-swap-agent
+pnpm install
+cp .env.example .env
+# fill in OPERATOR_KEYPAIR, AGENT_PDA, API_KEY
+pnpm dev
+```
+
+## The guard call (verbatim from the example)
+
+```ts
+const altheia = new Altheia({
+  agentPda: AGENT_PDA,
+  apiKey: API_KEY,
+  endpoint: BACKEND,
+  failureMode: "closed",
+  timeoutMs: 5000,
+});
+
+const sig = await altheia.guard(
+  { type: "swap", asset: "SOL", amount: amountSol, target: ORCA_WHIRLPOOL_PROGRAM_ID },
+  async () => {
+    const tx = await buildOrcaSwap(amountSol, mintIn, mintOut);
+    return await wallet.sendTransaction(tx, connection);
+  },
+);
+```
+
+`failureMode: "closed"` means: if the Altheia backend is unreachable, halt instead of letting the agent swing free. For production agents that move funds, this is the right default.
+
+## What you should see
+
+Scenario 1 lands a real tx on devnet. The audit chronicle picks up the signature within a few seconds. Scenarios 2–6 don't touch the chain at all — the SDK's pre-flight stops them before any signature is requested.
+
+Open the agent in the dashboard while you run the example and you'll see every denial show up in the chronicle with a reason code.
+
+<Card title="SDK reference" icon="arrow-right" href="/sdk/altheia" horizontal>
+  All methods on `Altheia`.
+</Card>

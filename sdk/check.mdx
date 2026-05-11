@@ -1,0 +1,65 @@
+---
+title: "check()"
+description: "Ask whether an action would be allowed, without running it."
+---
+
+```ts
+check(action: ActionDescriptor): Promise<Decision>
+```
+
+Sometimes you want a policy decision without executing the action — to decide whether to even propose it, to surface a UI hint, or to test what your policy allows.
+
+`check()` calls `/sdk/agent_check` with the same payload `guard()` would, but never runs anything afterwards and never reports an outcome.
+
+## Returns
+
+```ts
+type Decision = {
+  allowed: boolean;
+  reason?: string;          // human readable, e.g. "exceeds 50 per-tx USDC"
+  reason_code?: string;     // machine readable, e.g. "over_per_tx_cap"
+  audit_event_id: string;   // UUID, points at the audit row
+  cached: boolean;          // true if served from local cacheTTL
+  evaluated_at: string;     // ISO timestamp
+};
+```
+
+A `check()` call still writes an audit row (so you can see in the chronicle that the decision was requested) but no `tx_signature` is attached.
+
+## Failure-mode behavior
+
+If `failureMode: "open"` and the backend is unreachable, `check()` resolves with:
+
+```ts
+{
+  allowed: true,
+  reason: "sdk_unreachable_failopen",
+  reason_code: "sdk_failopen",
+  // ...
+}
+```
+
+If `failureMode: "closed"`, `check()` throws `AltheiaConnectionError`.
+
+## Example
+
+```ts
+const decision = await altheia.check({
+  type: "transfer",
+  asset: "USDC",
+  amount: 1200,
+  target: recipient,
+});
+
+if (!decision.allowed) {
+  notifyOperator(`would deny: ${decision.reason}`);
+}
+```
+
+## When to prefer `check()` over `guard()`
+
+- You want to show the operator "would this be allowed?" before they confirm.
+- You're testing a new policy without risk of accidentally running anything.
+- Your action doesn't sign on-chain (e.g. you're only inferring intent).
+
+In every other case, `guard()` is the right call — it gives you the audit row with the signature attached.

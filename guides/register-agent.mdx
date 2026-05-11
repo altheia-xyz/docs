@@ -1,0 +1,42 @@
+---
+title: "Register an agent"
+description: "Walk through the registration form in the dashboard."
+---
+
+You register an agent from the dashboard. One form, one signature.
+
+## 1. Open the dashboard
+
+[app.altheia.xyz](https://app.altheia.xyz) → **+ Register agent**.
+
+## 2. Fill the form
+
+| Field | What to put |
+| --- | --- |
+| **Name** | Anything memorable. Used in audit rows and Slack alerts. |
+| **Caps** | Per-tx + per-day, per asset. SOL and USDC by default; add more under Advanced. |
+| **Allowed programs** | Pick from the catalog (Orca, Jupiter, ...) or paste a program ID. |
+| **Blocked destinations** | Optional. Addresses this agent must never send to. |
+| **Framework** _(Advanced)_ | Defaults to `custom`. Pick `sak`, `eliza`, `virtuals` etc. if you're using a framework, otherwise leave as is. |
+
+The summary at the bottom mirrors what you typed. If the per-day cap doesn't match what you set, edit before submitting.
+
+## 3. Sign
+
+You sign one transaction. It creates the `AgentAccount` PDA on Solana and provisions a Swig session key with the policy mapped to on-chain constraints.
+
+If you close the wallet without signing, the agent shows as **pending** in your dashboard. Cancel it or sign later.
+
+## 4. Save the API key
+
+After the signature lands, the dashboard reveals the agent's API key **once**. Copy it now. You will use it as `ALTHEIA_API_KEY` in your SDK config. Lost keys can be rotated from the agent detail page.
+
+## 5. (Optional) Fund the session key
+
+Swig session keys hold per-agent budgets. From the agent detail page, **Deposit** sends from your operator wallet to the session key's vault. Agents spend from this balance; they cannot touch your operator wallet directly.
+
+You can **Reclaim** at any time to pull unspent funds back.
+
+<Card title="Next: integrate the SDK" icon="arrow-right" href="/guides/integrate-sdk" horizontal>
+  Wire `altheia.guard()` around your agent's signing path.
+</Card>

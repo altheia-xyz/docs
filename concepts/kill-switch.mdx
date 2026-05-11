@@ -1,0 +1,55 @@
+---
+title: "Kill switch"
+description: "Pause and revoke an agent from one page."
+---
+
+When an agent misbehaves, you have two levers.
+
+<Frame>
+  <img src="/images/controls.png" alt="Agent control panel: pause, unpause, revoke" />
+</Frame>
+
+## Pause
+
+Reversible. Sets the agent's on-chain status to `paused`. The Swig session key stays in place but the SDK's pre-flight check rejects every action with `agent_paused`. Unpause when you're ready.
+
+Use pause when:
+- You see a strange action and want to investigate before deciding.
+- A protocol you depend on is having an incident.
+- You're running maintenance.
+
+## Revoke
+
+Terminal. Sets the agent's on-chain status to `revoked` and destroys the Swig session key. The agent's API key still authenticates (so audit reports keep landing) but the agent can no longer sign on-chain.
+
+Use revoke when:
+- You're certain the agent has been compromised.
+- The model behind the agent has been deprecated.
+- You're shutting the agent down for good.
+
+You cannot un-revoke. Register a new agent if you need to bring it back.
+
+## What a denial looks like
+
+When an action fails policy, the SDK throws `PolicyDeniedError`:
+
+<Frame>
+  <img src="/images/denial.png" alt="Audit row: denied transfer over per-tx cap" />
+</Frame>
+
+```ts
+try {
+  await altheia.guard({ type: "transfer", asset: "USDC", amount: 1200, target: addr }, runFn);
+} catch (err) {
+  if (err instanceof PolicyDeniedError) {
+    console.log(err.reasonCode); // "over_per_tx_cap"
+    console.log(err.message);    // "Transfer 1,200 USDC exceeds 50 per-tx cap"
+  }
+}
+```
+
+Denials produce an audit row and, for revocations, an on-chain memo so the event is verifiable from Solscan.
+
+<Card title="Next: audit trail" icon="arrow-right" href="/concepts/audit-trail" horizontal>
+  Every decision, on-chain anchored.
+</Card>
