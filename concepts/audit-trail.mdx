@@ -1,47 +1,54 @@
 ---
 title: "Audit trail"
-description: "Every decision, anchored on-chain."
+description: "Every decision, written off-chain, anchored hourly to Solana."
 ---
 
-Every call to `guard()` or `check()` produces an **audit event**. The SDK calls `/sdk/agent_check`, Altheia decides, the decision is logged, and the call returns. If the action runs, `guard()` calls `/sdk/agent_report` to attach the outcome and the on-chain tx signature.
+Every call to `guard()` or `check()` produces an **audit event**. The SDK calls `/sdk/agent_check`, the backend decides, the decision is logged, and the call returns. If the action runs, `guard()` follows up with `/sdk/agent_report` to attach the outcome and the on-chain signature.
 
 <Frame>
   <img src="/images/audit-trail.png" alt="Chronicle: audit events for an agent" />
 </Frame>
 
-## What's recorded
+## What gets written
 
 | Field | Meaning |
 | --- | --- |
 | `agent_pda` | Which agent acted. |
 | `action` | The `ActionDescriptor` (type, asset, amount, target). |
 | `allowed` | `true` if policy allowed, `false` if denied. |
-| `reason_code` | Machine-readable: `over_per_tx_cap`, `scope_violation`, `agent_paused`, `over_per_day_cap`, ... |
-| `tx_signature` | The Solana signature if the action landed (set by `report()`). |
+| `reason_code` | Machine-readable: `over_per_tx_cap`, `program_not_in_scope`, `agent_paused`, etc. |
+| `tx_signature` | The Solana signature if the action landed. Attached by `report()`. |
 | `created_at` | UTC timestamp. |
+| `merkle_root_committed` | Set after the hourly anchor lands. Lets you verify on-chain. |
 
 ## On-chain anchoring
 
-Hourly, Altheia commits a Merkle root of the period's audit events to the operator account via `commit_audit_root`. The root is verifiable from the operator's `lastAuditRoot` field on Solscan. This means:
+Every hour, the backend takes all audit rows that haven't been anchored yet, computes their Merkle root in a canonical order, and calls `commit_audit_root` on the operator account. The root is readable from the operator's `lastAuditRoot` field on Solscan.
 
-- An auditor can ask Altheia for events between two slots, hash them in the same canonical order, and compare the root to what's on-chain.
-- Altheia cannot rewrite history without invalidating the chain of roots.
+This means:
+
+- An auditor can fetch the same events from Altheia, hash them in the same canonical order, and compare the root to what's on-chain. If they don't match, something was rewritten.
+- Altheia cannot rewrite history without breaking the chain of roots. Past roots reference past roots.
+
+The hourly cadence is a current implementation choice, not a contract. Future versions may anchor more frequently.
 
 ## Denials are loud
 
-Every denial emits a Solana memo at the same time the audit row is written. So a denied action is visible:
-- In the dashboard.
-- In your Slack webhook, if you configured one.
-- On Solscan, attached to the agent's account.
+Every denial writes a row in the chronicle and a Solana memo on the agent's PDA at the same time. So a denied action is visible in three places:
 
-## Reading the audit trail
+- The dashboard chronicle.
+- A Slack webhook, if you wired one up.
+- Solscan, under the agent's account.
 
-Three ways:
+## How to read the trail
 
-1. **Dashboard** — open an agent and scroll the chronicle.
-2. **Solscan** — open the agent's PDA. Memos are denial events; `audit_root` events are hourly roots.
-3. **HTTP** — `GET /v1/agents/:agent_pda/events?since=<iso>` returns the same data the dashboard renders (auth: operator JWT).
+| Surface | What you see | Auth |
+| --- | --- | --- |
+| **Dashboard** | The agent's chronicle, paginated and filterable. | Operator session (Phantom). |
+| **Solscan** | Memo events for denials, plus `commit_audit_root` events on the operator account. | None. Public chain data. |
+
+A first-class HTTP API for events is on the roadmap. For now, the dashboard is the canonical reader.
 
 <Card title="Integrate the SDK" icon="arrow-right" href="/guides/integrate-sdk" horizontal>
-  Hands-on: wrap your first agent action.
+  Wrap your first agent action with `guard()`.
 </Card>

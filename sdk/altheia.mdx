@@ -1,6 +1,6 @@
 ---
 title: "Altheia"
-description: "The SDK entry point. Constructor and config."
+description: "The SDK entry point. Constructor, config, and the five methods."
 ---
 
 ```ts
@@ -15,20 +15,20 @@ const altheia = new Altheia(config);
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `agentPda` | `string` | — | Required. The agent's `AgentAccount` PDA from the dashboard. |
-| `agentId` | `string` | — | Legacy DB UUID. Use `agentPda` for new code. |
-| `apiKey` | `string` | — | Required in production. Backend returns 401 without it. |
+| `agentPda` | `string` | _required_ | The agent's `AgentAccount` PDA from the reveal modal. Preferred. |
+| `agentId` | `string` | _required if no `agentPda`_ | Legacy DB UUID. Kept for back-compat. Use `agentPda` for new code. |
+| `apiKey` | `string` | _required_ | Bearer token from the reveal modal. Backend returns 401 without it. |
 | `endpoint` | `string` | `https://api.altheia.xyz` | Override only for self-hosted. |
-| `failureMode` | `"open" \| "closed"` | `"open"` | What to do when the backend is unreachable. |
-| `timeoutMs` | `number` | `1500` | Per-request timeout for `check` and `report`. |
-| `cacheTTL` | `number` | `0` | Cache repeat-action decisions in seconds. `0` disables. |
+| `failureMode` | `"open" \| "closed"` | `"open"` | Behaviour when the backend is unreachable. |
+| `timeoutMs` | `number` | `1500` | Per-request timeout for `check`, `report`, `ping`. |
+| `cacheTTL` | `number` | `0` | Cache repeat-action decisions, in seconds. `0` disables. |
 
-You must pass at least one of `agentPda` or `agentId`. If both are set, `agentPda` wins.
+You must pass at least one of `agentPda` or `agentId`. If both are set, `agentPda` wins. The constructor throws if neither is set.
 
 ### Failure mode
 
-- `"open"` (default): on backend timeout or error, return `allowed: true` with `reason: "sdk_unreachable_failopen"`. Swig's on-chain scope is the floor that catches over-cap actions. Use this when uptime matters more than strict enforcement.
-- `"closed"`: throw `AltheiaConnectionError`. Use this for agents that move money — halt is safer than swing.
+- `"open"` (default). On backend timeout or error, `check()` returns a synthetic `Decision` with `allowed: true` and `reason_code: "sdk_failopen"`. The agent proceeds. Swig's on-chain session-key scope is the floor that still catches over-cap actions. Use this when uptime matters more than strict off-chain enforcement.
+- `"closed"`. On backend unreachable, `check()` (and therefore `guard()`) throws `AltheiaConnectionError`. The agent halts. Use this for production agents that move money. Halt is safer than swing.
 
 ### Example
 
@@ -45,8 +45,35 @@ const altheia = new Altheia({
 
 | Method | What it does |
 | --- | --- |
-| [`guard(action, fn)`](/sdk/guard) | Check policy, run if allowed, audit the result. |
+| [`guard(action, fn)`](/sdk/guard) | Check policy, run if allowed, audit the result. The main entry point. |
 | [`check(action)`](/sdk/check) | Check policy without running anything. |
-| [`report(event)`](/sdk/report) | Attach an outcome to an audit row. |
-| `ping(status)` | Send a heartbeat. Best-effort. |
+| [`report(event)`](/sdk/report) | Attach an outcome to an existing audit row. |
+| `ping(status)` | Send a heartbeat to `/sdk/heartbeat`. Best-effort, never throws. |
 | `policy()` | Fetch the current policy in scope for this agent. |
+
+### `ping(status?)`
+
+```ts
+ping(status?: { status: "healthy" | "degraded" | "down"; detail?: string }): Promise<void>
+```
+
+Best-effort heartbeat. Logs a warning on failure but never throws. Default status is `"healthy"`.
+
+```ts
+setInterval(() => altheia.ping({ status: "healthy" }), 60_000);
+```
+
+### `policy()`
+
+```ts
+policy(): Promise<PolicyObject>
+```
+
+Returns the policy currently in scope for this agent. Useful for showing operators what their agent is allowed to do, or for asserting policy state in tests.
+
+```ts
+const p = await altheia.policy();
+console.log("max SOL per tx:", p.asset_caps?.["So11111111111111111111111111111111111111112"]?.max_per_tx);
+```
+
+Throws `AltheiaConnectionError` on backend error (independent of `failureMode`).

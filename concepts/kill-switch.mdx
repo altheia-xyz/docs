@@ -1,9 +1,9 @@
 ---
 title: "Kill switch"
-description: "Pause and revoke an agent from one page."
+description: "Pause and revoke. One click stops the agent mid-loop. One click ends it for good."
 ---
 
-When an agent misbehaves, you have two levers.
+When something is off, the operator has two levers. Both land on Solana. Both take effect on the next `guard()` call from your agent.
 
 <Frame>
   <img src="/images/controls.png" alt="Agent control panel: pause, unpause, revoke" />
@@ -11,45 +11,59 @@ When an agent misbehaves, you have two levers.
 
 ## Pause
 
-Reversible. Sets the agent's on-chain status to `paused`. The Swig session key stays in place but the SDK's pre-flight check rejects every action with `agent_paused`. Unpause when you're ready.
+**Reversible.** The on-chain status flips to `paused`. The session keypair stays intact in your env, but `agent_check` denies every action with `reasonCode: "agent_paused"`. Click **Unpause** and the agent resumes from exactly where it stopped.
 
-Use pause when:
-- You see a strange action and want to investigate before deciding.
-- A protocol you depend on is having an incident.
-- You're running maintenance.
+Reach for pause when:
+- You see a transaction you don't recognise and want a minute to look.
+- A protocol you trade against is having an incident.
+- You're deploying a model change and want the agent quiet while it lands.
 
 ## Revoke
 
-Terminal. Sets the agent's on-chain status to `revoked` and destroys the Swig session key. The agent's API key still authenticates (so audit reports keep landing) but the agent can no longer sign on-chain.
+**Terminal.** The on-chain status flips to `revoked` and the Swig session-key scope is destroyed. The session keypair file in your env is now a dead key: it has no authority on-chain, no matter who holds the secret. The API key still authenticates so straggler `report()` calls still write audit rows, but `agent_check` denies every action with `reasonCode: "agent_revoked"`.
 
-Use revoke when:
-- You're certain the agent has been compromised.
-- The model behind the agent has been deprecated.
+You cannot un-revoke. If you need the agent back, register a new one.
+
+Reach for revoke when:
+- You believe the session key has been exfiltrated.
+- The model behind the agent is being retired.
 - You're shutting the agent down for good.
 
-You cannot un-revoke. Register a new agent if you need to bring it back.
-
-## What a denial looks like
-
-When an action fails policy, the SDK throws `PolicyDeniedError`:
-
-<Frame>
-  <img src="/images/denial.png" alt="Audit row: denied transfer over per-tx cap" />
-</Frame>
+## What a denial looks like in code
 
 ```ts
 try {
-  await altheia.guard({ type: "transfer", asset: "USDC", amount: 1200, target: addr }, runFn);
+  await altheia.guard(
+    { type: "transfer", asset: "USDC", amount: 1200, target: addr },
+    runFn,
+  );
 } catch (err) {
   if (err instanceof PolicyDeniedError) {
-    console.log(err.reasonCode); // "over_per_tx_cap"
+    console.log(err.reasonCode); // "over_per_tx_cap" | "agent_paused" | "agent_revoked" | ...
     console.log(err.message);    // "Transfer 1,200 USDC exceeds 50 per-tx cap"
   }
 }
 ```
 
-Denials produce an audit row and, for revocations, an on-chain memo so the event is verifiable from Solscan.
+<Frame>
+  <img src="/images/denial.png" alt="Audit row: denied transfer over per-tx cap" />
+</Frame>
+
+Every denial writes an audit row. Revocations also emit a Solana memo on the agent's PDA, so the event is verifiable on Solscan without trusting Altheia.
+
+## Common reason codes
+
+| Code | Meaning |
+| --- | --- |
+| `over_per_tx_cap` | Action exceeds `asset_caps[mint].max_per_tx`. |
+| `over_per_day_cap` | Action would push the rolling 24h total over `max_per_day`. |
+| `program_not_in_scope` | The target program isn't in `allowed_programs`. |
+| `destination_blocked` | The target address is in `blocked_destinations`. |
+| `rate_limited` | Hit `max_actions_per_minute`. |
+| `agent_paused` | Operator paused this agent. |
+| `agent_revoked` | Operator revoked this agent. Permanent. |
+| `policy_expired` | `expires_at` has passed. |
 
 <Card title="Next: audit trail" icon="arrow-right" href="/concepts/audit-trail" horizontal>
-  Every decision, on-chain anchored.
+  Every decision, anchored hourly to Solana.
 </Card>

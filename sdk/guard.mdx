@@ -1,50 +1,62 @@
 ---
 title: "guard()"
-description: "Check policy, run the action, write the audit row."
+description: "Check policy, run the action, write the audit row. The main entry point."
 ---
 
 ```ts
 guard<T>(action: ActionDescriptor, fn: () => Promise<T>): Promise<T>
 ```
 
-The main entry point. Wrap your agent's signing function with `guard()` and Altheia handles policy enforcement and auditing around it.
+Wrap your agent's signing function. Altheia handles policy enforcement and auditing around it.
 
 ## What it does
 
-1. Calls `/sdk/agent_check` with the action.
-2. If allowed: runs `fn()`. If denied: throws `PolicyDeniedError` before `fn()` runs.
-3. After `fn()` resolves, calls `/sdk/agent_report` with the outcome. If `fn()` returned a string, it is passed through as the on-chain `tx_signature`.
+1. Calls `POST /sdk/agent_check` with the action descriptor.
+2. If allowed, runs `fn()`. If denied, throws `PolicyDeniedError` **before** `fn()` runs.
+3. After `fn()` resolves, fires `POST /sdk/agent_report` with the outcome. If `fn()` returned a string, that string is passed through as the audit row's `tx_signature` (so the chronicle links to Solscan).
 
-The report call is best-effort. A failed report does not affect the return value.
+The report call is best-effort and never throws. A failed report does not affect the return value.
 
 ## Parameters
 
 | Param | Type | Notes |
 | --- | --- | --- |
-| `action` | `ActionDescriptor` | What you intend to do. Used for policy check + audit. |
-| `fn` | `() => Promise<T>` | The function that actually executes the action. |
+| `action` | `ActionDescriptor` | What you intend to do. Used for policy check and audit. |
+| `fn` | `() => Promise<T>` | The function that actually signs and sends. |
 
 ### `ActionDescriptor`
 
 ```ts
 type ActionDescriptor = {
   type: "transfer" | "swap" | "sign" | "invoke" | "inference" | "custom";
-  amount?: number;       // in human units (50 USDC, 0.5 SOL)
-  asset?: string;        // mint pubkey or "SOL" / "USDC"
-  target?: string;       // destination address or program ID
+  amount?: number;       // human units: 50 USDC, 0.5 SOL
+  asset?: string;        // mint pubkey or symbol "SOL" / "USDC"
+  target?: string;       // destination address or target program ID
   metadata?: Record<string, unknown>;
 };
 ```
 
 ## Returns
 
-Whatever `fn()` returns. If `fn()` returns a string, it is treated as a Solana tx signature and attached to the audit row.
+Whatever `fn()` returns. If `fn()` returns a `string`, it is treated as a Solana tx signature and attached to the audit row.
 
 ## Throws
 
-- `PolicyDeniedError` — policy denied the action. `fn()` did not run.
-- `AltheiaConnectionError` — backend was unreachable AND `failureMode` is `"closed"`.
-- Any error thrown by `fn()` itself.
+| Error | When |
+| --- | --- |
+| `PolicyDeniedError` | Policy denied the action. `fn()` did not run. |
+| `AltheiaConnectionError` | Backend was unreachable AND `failureMode: "closed"`. |
+| Any error from `fn()` | Propagated as-is. |
+
+`PolicyDeniedError` exposes three properties:
+
+```ts
+class PolicyDeniedError extends Error {
+  readonly reason: string;       // human readable
+  readonly reasonCode?: string;  // machine code, e.g. "over_per_tx_cap"
+  readonly auditEventId: string; // UUID of the audit row written for this denial
+}
+```
 
 ## Example
 
@@ -62,7 +74,7 @@ try {
   console.log("landed:", sig);
 } catch (err) {
   if (err instanceof PolicyDeniedError) {
-    console.log("denied:", err.reasonCode, err.message);
+    console.log("denied:", err.reasonCode, err.reason);
   } else {
     throw err;
   }
@@ -71,4 +83,4 @@ try {
 
 ## When not to use `guard()`
 
-If your action does not sign anything on-chain (a no-op, a read, an inference call) you usually don't need `guard()`. Use [`check()`](/sdk/check) if you want a policy decision without side effects.
+If your action doesn't sign anything (a read, an inference call, a dry-run), you don't need `guard()`. Use [`check()`](/sdk/check) to get a policy decision without side effects.

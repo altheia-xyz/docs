@@ -1,72 +1,163 @@
 ---
 title: "Quickstart"
-description: "Register an agent and ship your first guarded action."
+description: "Zero to a guarded action on devnet in ten minutes."
 ---
 
-Five steps. About ten minutes.
+You'll register an agent in the dashboard, fund its session key from a devnet faucet, then run a Node script that calls `altheia.guard()` against the real backend. By the end you'll see one allow and one deny in the chronicle.
 
-## 1. Sign in as an operator
+## Prerequisites
 
-Open [altheia.xyz/dashboard](https://altheia.xyz/dashboard) and connect Phantom. Your wallet becomes the operator authority. The first time you sign in, an `OperatorAccount` PDA is created on Solana.
+<Steps>
+  <Step title="Phantom wallet, switched to devnet">
+    Install [Phantom](https://phantom.app/). Open Settings, **Developer Settings**, set network to **Devnet**.
+  </Step>
+  <Step title="Devnet SOL in your operator wallet">
+    [faucet.solana.com](https://faucet.solana.com/) → paste your Phantom address → airdrop 1 SOL. You'll spend ~0.01 SOL on registration + lifecycle signatures.
+  </Step>
+  <Step title="Node 20+ and pnpm">
+    `node -v` should say 20 or higher. `npm i -g pnpm` if you don't have it.
+  </Step>
+</Steps>
+
+## 1. Sign in
+
+Open [altheia.xyz/dashboard](https://altheia.xyz/dashboard). Click **Connect wallet**, sign the challenge in Phantom. Your wallet becomes the **operator**. On first sign-in an `OperatorAccount` PDA is created on Solana.
 
 ## 2. Register your first agent
 
-Click **+ Register agent**. Give it a name, set per-tx + per-day caps, and pick the programs it can invoke.
+Click **+ Register agent**.
 
 <Frame>
-  <img src="/images/policy.png" alt="Policy editor: per-tx and per-day caps, allowed programs" />
+  <img src="/images/policy.png" alt="Policy section in the dashboard, same fields you'll fill on the register form" />
 </Frame>
 
-When you submit, you sign one transaction. The agent's `AgentAccount` PDA is created and a Swig session key is provisioned with the policy mapped to on-chain constraints.
+Fill the form:
 
-Save the API key shown on success. It is revealed once.
+- **Name.** Anything memorable. Shows up in audit rows.
+- **Caps.** Start with SOL `max_per_tx 0.2`, `max_per_day 1`. You can edit later.
+- **Allowed programs.** Pick **Orca Whirlpools** from the catalog. Add **Token Program** too if you'll need it.
 
-## 3. Install the SDK
+Submit. Phantom pops up once. Sign.
+
+<Warning>
+  After the tx lands, the dashboard shows a **reveal modal with three values shown once**:
+
+  1. `agentPda`. The agent's on-chain identity. Public, also visible on Solscan.
+  2. `sessionKeyBase58`. The agent's private keypair, generated in your browser. **Backend never had it. Lose it and you must revoke + re-register.**
+  3. `apiKey`. The SDK's bearer token. Rotatable from the agent detail page if you lose it.
+
+  Copy all three into a password manager **before you close the modal**. The session keypair is the one you cannot recover; the other two are convenience.
+</Warning>
+
+## 3. Fund the session key
+
+The session key is a fresh Solana keypair with zero balance. It pays its own gas and provides the SOL the agent will spend. The reveal modal shows its **public** address.
 
 ```bash
-pnpm add @altheia-xyz/sdk
+solana airdrop 0.5 <sessionKeyPubkey> --url devnet
 ```
 
-Or `npm install` / `yarn add`. The SDK targets Node 20+ and modern browsers.
+Or paste the pubkey into [faucet.solana.com](https://faucet.solana.com/) if the CLI rate-limits.
 
-## 4. Initialize
+## 4. Install the SDK
 
-```ts
-import { Altheia } from "@altheia-xyz/sdk";
+```bash
+mkdir altheia-hello && cd altheia-hello
+pnpm init
+pnpm add @altheia-xyz/sdk @solana/web3.js bs58
+pnpm add -D tsx
+```
 
+Create `.env`:
+
+```bash
+ALTHEIA_AGENT_PDA=<paste from reveal modal>
+ALTHEIA_API_KEY=<paste from reveal modal>
+ALTHEIA_SESSION_KEY=<paste sessionKeyBase58 from reveal modal>
+```
+
+## 5. Wire `altheia.guard()`
+
+Create `hello.ts`:
+
+```ts hello.ts
+import { Altheia, PolicyDeniedError } from "@altheia-xyz/sdk";
+import { Connection, Keypair, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import bs58 from "bs58";
+
+// 1. Load the session key. Backend never had this secret; it lives in your env.
+const sessionKey = Keypair.fromSecretKey(bs58.decode(process.env.ALTHEIA_SESSION_KEY!));
+
+// 2. Construct the Altheia client. agentPda + apiKey is all it needs.
 const altheia = new Altheia({
-  agentPda: process.env.ALTHEIA_AGENT_PDA!, // Solscan-linkable PDA from the dashboard
+  agentPda: process.env.ALTHEIA_AGENT_PDA!,
   apiKey: process.env.ALTHEIA_API_KEY!,
-  failureMode: "closed", // halt the agent if the backend is unreachable
+  failureMode: "closed",
+  timeoutMs: 5000,
 });
-```
 
-Defaults: `endpoint` is `https://api.altheia.xyz`, `failureMode` is `"open"`, `timeoutMs` is `1500`.
+// 3. Wrap a real on-chain action. The session key signs the underlying tx.
+const conn = new Connection("https://api.devnet.solana.com", "confirmed");
+const recipient = sessionKey.publicKey; // send to self for the demo
 
-## 5. Guard an action
+async function sendSol(lamports: number) {
+  return altheia.guard(
+    { type: "transfer", asset: "SOL", amount: lamports / LAMPORTS_PER_SOL, target: recipient.toBase58() },
+    async () => {
+      const tx = new Transaction().add(
+        SystemProgram.transfer({ fromPubkey: sessionKey.publicKey, toPubkey: recipient, lamports }),
+      );
+      const sig = await conn.sendTransaction(tx, [sessionKey]);
+      await conn.confirmTransaction(sig, "confirmed");
+      return sig;
+    },
+  );
+}
 
-Wrap any signed action with `guard()`. If the policy denies it, `guard()` throws before your function runs.
-
-```ts
-import { PolicyDeniedError } from "@altheia-xyz/sdk";
+// 4. One allowed, one denied.
+try {
+  const sigOk = await sendSol(0.01 * LAMPORTS_PER_SOL);
+  console.log("allowed, signature:", sigOk);
+} catch (err) {
+  if (err instanceof PolicyDeniedError) console.log("unexpected deny:", err.reasonCode, err.reason);
+}
 
 try {
-  const sig = await altheia.guard(
-    { type: "transfer", asset: "USDC", amount: 50, target: recipient },
-    async () => sendUsdc(recipient, 50), // returns the tx signature
-  );
-  console.log("landed:", sig);
+  await sendSol(5 * LAMPORTS_PER_SOL); // over the 0.2 SOL cap
 } catch (err) {
-  if (err instanceof PolicyDeniedError) {
-    console.log("denied:", err.reasonCode, err.message);
-  } else {
-    throw err;
-  }
+  if (err instanceof PolicyDeniedError) console.log("denied as expected:", err.reasonCode, err.reason);
 }
 ```
 
-Every call writes an audit row. Denials get an on-chain memo. Open the **Chronicle** tab in the dashboard to see them.
+Run it:
 
-<Card title="Full Orca swap example" icon="github" href="/guides/orca-swap-example" horizontal>
-  A working agent that swaps SOL → USDC on Orca with six policy scenarios.
-</Card>
+```bash
+pnpm tsx --env-file=.env hello.ts
+```
+
+You should see one `allowed` line with a real signature, then one `denied as expected: over_per_tx_cap`.
+
+## 6. Verify in the dashboard
+
+Open `altheia.xyz/agents/<agentPda>`. The chronicle has two rows: an `action_allowed` with a Solscan link, and an `action_denied` with reason `over_per_tx_cap`.
+
+<Frame>
+  <img src="/images/audit-trail.png" alt="Chronicle: one allowed and one denied" />
+</Frame>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Operator vs agent" icon="user-shield" href="/concepts/agents">
+    Two roles, two wallets, two signing keys. The mental model.
+  </Card>
+  <Card title="Run the Orca example" icon="play" href="/guides/orca-swap-example">
+    Six scenarios including pause and revoke, on a real DEX.
+  </Card>
+  <Card title="SDK reference" icon="code" href="/sdk/altheia">
+    Every option on `Altheia` and every method, typed.
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/troubleshooting">
+    401, missing session key, faucet rate-limits, wrong network.
+  </Card>
+</CardGroup>

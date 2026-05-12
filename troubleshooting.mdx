@@ -1,0 +1,92 @@
+---
+title: "Troubleshooting"
+description: "Errors a new operator usually hits, and what to do about them."
+---
+
+The five things that go wrong on first run. If you see something not on this list, ping the team on X [@altheiaxyz](https://x.com/altheiaxyz).
+
+## `401: invalid api key provided` from the SDK
+
+The `apiKey` in your env doesn't match the agent at `agentPda`. Common causes:
+
+- You copied the apiKey from a different agent's reveal modal. Each agent has its own.
+- You rotated the key in the dashboard but didn't update `.env`.
+
+Fix: open the agent detail page, look at the apiKey prefix shown there (e.g. `alth_sk_2jjEGC...`), and confirm your `.env` starts with the same prefix. If it doesn't, you have the wrong key. Rotate from the dashboard and update `.env`.
+
+## `400 invalid_body: session_key_pubkey required`
+
+You hit `POST /agents` without a `session_key_pubkey` in the body. This usually means you're not using the dashboard's registration flow.
+
+The dashboard generates the session keypair in your browser, derives the pubkey, and includes it in the request. If you're calling the API directly, you must generate a keypair client-side and pass the pubkey along.
+
+```ts
+import { Keypair } from "@solana/web3.js";
+const sessionKey = Keypair.generate();
+await fetch(`${API}/agents`, {
+  method: "POST",
+  body: JSON.stringify({
+    name: "my-agent",
+    policy: { /* ... */ },
+    session_key_pubkey: sessionKey.publicKey.toBase58(),
+  }),
+});
+// SAVE sessionKey.secretKey somewhere safe. The backend never sees it.
+```
+
+## "Phantom doesn't pop up when I click Connect"
+
+Two usual suspects:
+
+1. **Phantom is locked.** Unlock it manually, then click again.
+2. **You're on the wrong network.** Open Phantom → Settings → Developer Settings → Network → switch to **Devnet**. Altheia's program lives on devnet today; if Phantom is on mainnet, the dashboard refuses the connection silently in some browsers.
+
+If neither helps, try a hard reload (Cmd+Shift+R / Ctrl+Shift+R) to clear stale extension state.
+
+## "Faucet says I've hit the rate limit"
+
+`solana airdrop` enforces a per-IP cap on devnet. Options:
+
+- Wait ~30 minutes and retry.
+- Use the web faucet at [faucet.solana.com](https://faucet.solana.com/). Different rate-limit pool.
+- Ask in a Solana developer Discord; most have devnet faucet bots with generous limits.
+
+For the orca example you need ~0.2 SOL on the session key. Top-up in small chunks if a single 1 SOL airdrop fails.
+
+## `create_swig_first` response from `POST /agents`
+
+If you (or the dashboard) call `POST /agents` for the first agent and your operator wallet doesn't have a Swig smart-account yet, the backend returns:
+
+```json
+{
+  "status": "create_swig_first",
+  "message": "This operator has no Swig smart-account yet. Sign + submit the included createSwig transaction, await confirmation, then POST /agents again with the same session_key_pubkey.",
+  "transaction": { "base64": "..." }
+}
+```
+
+This is normal first-time setup. The dashboard handles it transparently. If you're calling the API directly: deserialize the included transaction, have your operator sign and send it, wait for confirmation, then re-POST `/agents` with the **same** `session_key_pubkey`.
+
+## "I see `denied` rows with the right reason code, but no `success` rows for actions I ran"
+
+`report()` is best-effort. If your script's network is flaky, the post-execution report can drop. The backend's reconciliation cron watches the session key on-chain and back-fills `tx_signature` on the matching audit row within a few minutes.
+
+If after ~10 minutes the row still has no signature attached, check:
+
+1. The transaction did land (open Solscan with your session key pubkey).
+2. The session key is actually the one registered for that agent.
+3. Your script returned the signature string from the `fn` passed to `guard()`. If you return `undefined`, the audit row will be `success` but with no signature.
+
+## "Policy was saved as 0.1/0.2 but I entered 0.1/1"
+
+Known frontend issue in some browser/network states. The summary screen on the registration form occasionally shows the per-day cap correctly but submits a stale value. Workaround: open the agent detail page after registration and edit the policy. The on-chain commitment will update.
+
+If you reproduce this with consistent steps, open an issue at [github.com/altheia-xyz/web](https://github.com/altheia-xyz) so we can patch.
+
+## "My agent is `paused` right after registration"
+
+Expected. The agent row is inserted as `paused` until the on-chain registration tx confirms. Refresh after ~10 seconds; it should flip to `active`. If it stays `paused` for more than a minute, the Phantom signature didn't land on-chain. Try the registration again.
+
+<Card title="Open an issue" icon="github" href="https://github.com/altheia-xyz" horizontal>
+  Anything not covered here, file it on GitHub or DM us on X.
+</Card>

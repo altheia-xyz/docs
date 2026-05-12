@@ -1,6 +1,6 @@
 ---
 title: "report()"
-description: "Attach an outcome to an audit row."
+description: "Attach an outcome to an audit row written by check()."
 ---
 
 ```ts
@@ -13,7 +13,7 @@ report(event: {
 }): Promise<void>
 ```
 
-`guard()` calls `report()` for you. You only call it directly when you do the check yourself with [`check()`](/sdk/check) and execute separately.
+`guard()` calls `report()` for you. You only call it directly when you split the flow: do the policy decision yourself with [`check()`](/sdk/check), then execute and report separately.
 
 ## When you'd use it directly
 
@@ -40,7 +40,7 @@ try {
 }
 ```
 
-Pass the `audit_event_id` from the `check()` decision so the report attaches to the same row instead of creating a new one.
+Pass `audit_event_id` from the `check()` decision. That way the outcome attaches to the same row instead of creating a duplicate.
 
 ## Parameters
 
@@ -50,12 +50,12 @@ Pass the `audit_event_id` from the `check()` decision so the report attaches to 
 | `outcome` | `"success" \| "failure"` | Whether the action ran. |
 | `audit_event_id` | `string` | UUID from the `check()` decision. Optional. |
 | `detail` | `string` | Free-form notes. Surfaced in the chronicle. |
-| `tx_signature` | `string` | Solana signature. Surfaced as a Solscan link in the chronicle. |
+| `tx_signature` | `string` | Solana signature. Becomes a Solscan link in the chronicle. |
 
 ## Best-effort
 
-`report()` will not throw. If the network is unreachable, it logs a warning and resolves. Audit completeness is backstopped by the backend's reconciliation cron, which sweeps recent transactions on the agent's session key and fills in missing reports.
+`report()` never throws. If the network is unreachable, it logs a warning and resolves. Audit completeness is backstopped by the backend's reconciliation cron: it watches the agent's session key for transactions and fills in missing reports from chain data.
 
 ## Don't double-report
 
-`guard()` already reports. Calling `report()` after `guard()` for the same action will create a duplicate row.
+`guard()` already reports. Calling `report()` after `guard()` for the same action creates a duplicate row.

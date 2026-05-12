@@ -1,20 +1,40 @@
 ---
 title: "Integrate the SDK"
-description: "Wrap a signing path with altheia.guard()."
+description: "Wire the session key, wrap your signing function, ship."
 ---
+
+The SDK does two things: it calls Altheia to ask "is this allowed?", and it logs the outcome. The signing itself is yours: your code holds the session keypair, your code builds the transaction, your code sends it.
 
 ## Install
 
 ```bash
-pnpm add @altheia-xyz/sdk @solana/web3.js
+pnpm add @altheia-xyz/sdk @solana/web3.js bs58
 ```
 
 Node 20+. Browser builds work in modern bundlers (Vite, Webpack 5+).
 
+## Env vars
+
+These three come from the registration reveal modal. Save them in `.env`:
+
+```bash
+ALTHEIA_AGENT_PDA=<from reveal modal>
+ALTHEIA_API_KEY=<from reveal modal>
+ALTHEIA_SESSION_KEY=<sessionKeyBase58 from reveal modal>
+```
+
+If you lost any of these, you can rotate `ALTHEIA_API_KEY` from the agent detail page. You **cannot** recover the session key. Revoke and register a new agent.
+
 ## Initialize
+
+The Altheia client only needs the PDA and API key. The session key lives separately because it signs the underlying tx, not the policy check.
 
 ```ts
 import { Altheia } from "@altheia-xyz/sdk";
+import { Keypair } from "@solana/web3.js";
+import bs58 from "bs58";
+
+const sessionKey = Keypair.fromSecretKey(bs58.decode(process.env.ALTHEIA_SESSION_KEY!));
 
 const altheia = new Altheia({
   agentPda: process.env.ALTHEIA_AGENT_PDA!,
@@ -24,71 +44,93 @@ const altheia = new Altheia({
 });
 ```
 
+### Config options
+
 | Option | Default | Notes |
 | --- | --- | --- |
-| `agentPda` | — | Required. PDA from the dashboard. |
-| `apiKey` | — | Required in production. Backend returns 401 without it. |
-| `endpoint` | `https://api.altheia.xyz` | Override only for self-hosted. |
-| `failureMode` | `"open"` | `"closed"` throws if backend is unreachable. Recommended for production. |
-| `timeoutMs` | `1500` | Per-request timeout for `check` / `report`. |
-| `cacheTTL` | `0` | Cache repeat-action decisions in seconds. |
+| `agentPda` | _required_ | PDA from the dashboard reveal modal. |
+| `apiKey` | _required_ | Bearer token from the reveal modal. Backend returns 401 without it. |
+| `endpoint` | `https://api.altheia.xyz` | Override for self-hosted only. |
+| `failureMode` | `"open"` | `"closed"` throws `AltheiaConnectionError` on backend timeout. Recommended for production agents that move money. |
+| `timeoutMs` | `1500` | Per-request timeout for `check` and `report`. |
+| `cacheTTL` | `0` | Seconds to cache repeat-action decisions client-side. `0` disables. |
 
-## Pattern: wrap your signing function
+## Wrap a signing function
 
-`guard()` does three things, in order:
+`guard()` runs three steps in order:
 
-1. Calls `/sdk/agent_check` with the action.
-2. If allowed, runs your function. If denied, throws `PolicyDeniedError`.
-3. Calls `/sdk/agent_report` with the outcome and tx signature.
+1. `POST /sdk/agent_check` with the action descriptor.
+2. If allowed, runs your function. If denied, throws `PolicyDeniedError` and your function never runs.
+3. After your function resolves, fires `POST /sdk/agent_report` with the outcome and (if you returned one) the on-chain tx signature.
 
 ```ts
 import { PolicyDeniedError } from "@altheia-xyz/sdk";
+import { Connection, SystemProgram, Transaction, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 
-async function sendUsdc(to: string, amount: number) {
-  const sig = await altheia.guard(
-    { type: "transfer", asset: "USDC", amount, target: to },
+const conn = new Connection("https://api.devnet.solana.com", "confirmed");
+
+async function sendSol(to: string, amountSol: number): Promise<string> {
+  return altheia.guard(
+    { type: "transfer", asset: "SOL", amount: amountSol, target: to },
     async () => {
-      const tx = await buildTransferTx(to, amount);
-      const sig = await wallet.sendTransaction(tx, connection);
-      return sig; // return the signature so it lands in the audit row
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: sessionKey.publicKey,
+          toPubkey: new PublicKey(to),
+          lamports: amountSol * LAMPORTS_PER_SOL,
+        }),
+      );
+      const sig = await conn.sendTransaction(tx, [sessionKey]);
+      await conn.confirmTransaction(sig, "confirmed");
+      return sig; // returned string is treated as the tx signature in the audit row
     },
   );
-  return sig;
 }
 ```
 
-The `ActionDescriptor` is the structured shape Altheia checks against policy:
+The function you pass to `guard()` is yours to write. The SDK does not build, sign, or send transactions for you. It just decides whether your function gets to run.
+
+## Action descriptors
 
 ```ts
 type ActionDescriptor = {
   type: "transfer" | "swap" | "sign" | "invoke" | "inference" | "custom";
-  amount?: number;
-  asset?: string;          // mint pubkey or symbol "SOL" / "USDC"
-  target?: string;         // destination address or program ID
+  amount?: number;       // human units: 50 USDC, 0.5 SOL
+  asset?: string;        // mint pubkey or symbol "SOL" / "USDC"
+  target?: string;       // destination address or target program ID
   metadata?: Record<string, unknown>;
 };
 ```
+
+| `type` | Use for |
+| --- | --- |
+| `transfer` | Sending SOL or SPL tokens. Checked against `asset_caps` and `blocked_destinations`. |
+| `swap` | DEX swaps. `asset` is the input token; `target` is the DEX program. Checked against caps and `allowed_programs`. |
+| `invoke` | Arbitrary program call. `target` is the program ID. Checked against `allowed_programs`. |
+| `sign` | Off-chain message signing. Auditable but not policy-checked beyond rate limits. |
+| `inference` | A model call. Auditable, no signing. |
+| `custom` | Anything else. Carries `metadata` only. |
 
 ## Handling denials
 
 ```ts
 try {
-  await sendUsdc(to, 1200);
+  await sendSol(recipient, 5);
 } catch (err) {
   if (err instanceof PolicyDeniedError) {
-    // err.reasonCode: "over_per_tx_cap" | "scope_violation" | "agent_paused" | ...
-    // err.message: human-readable reason
+    // err.reasonCode: "over_per_tx_cap" | "program_not_in_scope" | "agent_paused" | ...
+    // err.message:    human-readable
     return notifyOperator(err);
   }
   throw err;
 }
 ```
 
-Denials are normal control flow. They are not bugs. Most agents will hit a denial occasionally — that's the system working.
+Denials are normal control flow, not bugs. A well-tuned agent will hit them occasionally and recover.
 
 ## Health check
 
-`ping()` sends a heartbeat so the dashboard knows the agent is alive:
+`ping()` is a best-effort heartbeat. The dashboard uses it to mark the agent online.
 
 ```ts
 setInterval(() => {
@@ -96,8 +138,15 @@ setInterval(() => {
 }, 60_000);
 ```
 
-Best-effort. If it fails, your agent still runs.
+If `ping()` fails (network blip, backend outage), your agent keeps running. The dashboard will mark it stale until the next successful ping.
 
-<Card title="Full working example" icon="github" href="/guides/orca-swap-example" horizontal>
-  An Orca swap agent with six scenarios, including the failure modes.
+## What `failureMode` actually does
+
+| Mode | Behaviour on backend timeout | When to use |
+| --- | --- | --- |
+| `"open"` (default) | Returns `allowed: true` with `reason: "sdk_unreachable_failopen"`. Swig's on-chain scope is the floor. | Agents that prize uptime over strict enforcement. |
+| `"closed"` | Throws `AltheiaConnectionError`. Your function does not run. | Agents that move money. Halt > swing. |
+
+<Card title="Working example with all six scenarios" icon="play" href="/guides/orca-swap-example" horizontal>
+  Real Orca swap on devnet. Pause and revoke in the middle, see exactly what fires.
 </Card>

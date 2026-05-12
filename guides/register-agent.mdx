@@ -1,41 +1,76 @@
 ---
 title: "Register an agent"
-description: "Walk through the registration form in the dashboard."
+description: "From dashboard form to a funded, signable session key."
 ---
 
-You register an agent from the dashboard. One form, one signature.
+Registration is one form, one Phantom signature, and three secrets you save once. This guide walks every field and tells you exactly what to do with the reveal modal.
 
 ## 1. Open the dashboard
 
-[altheia.xyz/dashboard](https://altheia.xyz/dashboard) → **+ Register agent**.
+[altheia.xyz/dashboard](https://altheia.xyz/dashboard) → **Connect wallet** → **+ Register agent**.
+
+Phantom must be on **Devnet**. Settings → Developer Settings → Network → Devnet.
 
 ## 2. Fill the form
 
 | Field | What to put |
 | --- | --- |
-| **Name** | Anything memorable. Used in audit rows and Slack alerts. |
-| **Caps** | Per-tx + per-day, per asset. SOL and USDC by default; add more under Advanced. |
-| **Allowed programs** | Pick from the catalog (Orca, Jupiter, ...) or paste a program ID. |
-| **Blocked destinations** | Optional. Addresses this agent must never send to. |
-| **Framework** _(Advanced)_ | Defaults to `custom`. Pick `sak`, `eliza`, `virtuals` etc. if you're using a framework, otherwise leave as is. |
+| **Name** | Anything memorable. Surfaces in audit rows and webhooks. |
+| **Caps** | Per-tx and per-day, per asset. SOL and USDC are pre-filled. Add more assets under Advanced. |
+| **Allowed programs** | Pick from the catalog (Orca, Token Program, others). Or paste any program ID. |
+| **Blocked destinations** | Optional. Addresses this agent must never send to. Off-chain enforced. |
+| **Framework** _(Advanced)_ | Stays as `custom` unless you're integrating via SAK / Eliza / Virtuals. Cosmetic. |
 
-The summary at the bottom mirrors what you typed. If the per-day cap doesn't match what you set, edit before submitting.
+The summary at the bottom mirrors what you typed. If a number looks off, edit before submitting.
 
-## 3. Sign
+<Tip>
+  Start tight. SOL `max_per_tx 0.2 / max_per_day 1`. USDC `max_per_tx 100 / max_per_day 500`. You can loosen later from the agent detail page.
+</Tip>
 
-You sign one transaction. It creates the `AgentAccount` PDA on Solana and provisions a Swig session key with the policy mapped to on-chain constraints.
+## 3. Sign the registration tx
 
-If you close the wallet without signing, the agent shows as **pending** in your dashboard. Cancel it or sign later.
+You sign **one** transaction in Phantom. It creates the `AgentAccount` PDA, anchors the policy commitment, and registers the session key pubkey with Swig.
 
-## 4. Save the API key
+If your operator wallet doesn't have a Swig smart-account yet (first agent), the dashboard prompts you to sign a `createSwig` tx first. Same flow, just two signatures instead of one.
 
-After the signature lands, the dashboard reveals the agent's API key **once**. Copy it now. You will use it as `ALTHEIA_API_KEY` in your SDK config. Lost keys can be rotated from the agent detail page.
+## 4. Save the three secrets
 
-## 5. (Optional) Fund the session key
+After the tx lands, the dashboard shows a **reveal modal** with three values:
 
-Swig session keys hold per-agent budgets. From the agent detail page, **Deposit** sends from your operator wallet to the session key's vault. Agents spend from this balance; they cannot touch your operator wallet directly.
+| Secret | What it is | What you do with it |
+| --- | --- | --- |
+| `agentPda` | The agent's on-chain identity. | Goes in your env as `ALTHEIA_AGENT_PDA`. Public, but easier to copy now. |
+| `sessionKeyBase58` | The agent's **private keypair**, base58-encoded. | Goes in your env as `ALTHEIA_SESSION_KEY`. **Backend never had this.** |
+| `apiKey` | The SDK's bearer token for `/sdk/agent_check`. | Goes in your env as `ALTHEIA_API_KEY`. We store only the SHA-256 hash. |
 
-You can **Reclaim** at any time to pull unspent funds back.
+The modal also shows the **session key pubkey**. Copy it too. You'll use it to fund the agent's wallet next.
+
+<Warning>
+  Close the modal and these are gone. There is no "show again" button.
+
+  - The session key was generated in your browser. Backend never received it. If you lose it, the agent's on-chain funds are unreachable; you must revoke and start over.
+  - The apiKey can be rotated from the agent detail page if needed.
+</Warning>
+
+## 5. Fund the session key
+
+The session key is a fresh keypair with zero balance. It needs SOL to pay its own gas and to provide the asset the agent will spend.
+
+```bash
+solana airdrop 0.5 <sessionKeyPubkey> --url devnet
+```
+
+Faucet UI alternative: [faucet.solana.com](https://faucet.solana.com/), paste the pubkey.
+
+For tokens like USDC, transfer to the same pubkey from any devnet source. Devnet USDC mint: `BRjpCHtyQLNCo8gqRUr8jtdAj5AjPYQaoqbvcZiHok1k`.
+
+<Note>
+  On mainnet (future) you'll use **Deposit** in the agent detail page to send funds from your operator wallet to the session key. On devnet, the faucet is easier.
+</Note>
+
+## 6. (Optional) Reclaim unspent funds
+
+The agent detail page has a **Reclaim** button. It builds a tx the operator signs to sweep the session key's remaining balance back to the operator wallet. Use it before revoking if there's a balance you want back.
 
 <Card title="Next: integrate the SDK" icon="arrow-right" href="/guides/integrate-sdk" horizontal>
   Wire `altheia.guard()` around your agent's signing path.

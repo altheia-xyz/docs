@@ -1,9 +1,9 @@
 ---
 title: "Policies"
-description: "Per-agent guardrails enforced both off-chain and on-chain."
+description: "Per-agent guardrails enforced off-chain by the SDK and on-chain by Swig."
 ---
 
-A **policy** is a per-agent JSON document that defines what an agent may do. It is enforced in two places: the SDK's pre-flight check (off-chain) and Swig's session-key constraints (on-chain).
+A **policy** is a per-agent JSON document that defines what the agent may do. Altheia enforces it in two places: the SDK pre-flight (off-chain, fast) and Swig's session-key scope (on-chain, the floor).
 
 <Frame>
   <img src="/images/policy.png" alt="Policy editor: per-tx caps, per-day caps, allowed programs, blocked destinations" />
@@ -14,7 +14,7 @@ A **policy** is a per-agent JSON document that defines what an agent may do. It 
 ```json
 {
   "asset_caps": {
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+    "BRjpCHtyQLNCo8gqRUr8jtdAj5AjPYQaoqbvcZiHok1k": {
       "max_per_tx": 50,
       "max_per_day": 500
     },
@@ -33,31 +33,47 @@ A **policy** is a per-agent JSON document that defines what an agent may do. It 
 }
 ```
 
+The example uses devnet mints: `BRjpCHty...` is devnet USDC, `So11111...` is wrapped SOL. On mainnet (future) the USDC mint is different. Match the chain you're on.
+
 ## Fields
 
 | Field | What it controls | Enforced on-chain? |
 | --- | --- | --- |
-| `asset_caps[mint].max_per_tx` | Max units per single transaction. | yes (Swig `TokenLimit`) |
-| `asset_caps[mint].max_per_day` | Max units in a rolling 24h window. | yes (Swig `TokenRecurringLimit`) |
-| `allowed_programs` | Program IDs the agent may invoke. | yes (Swig `Program` scope) |
-| `blocked_destinations` | Addresses the agent may never send to. | off-chain only |
-| `max_actions_per_minute` | Rate limit on guarded calls. | off-chain only |
-| `expires_at` | Auto-revoke at this ISO timestamp. | off-chain trigger |
+| `asset_caps[mint].max_per_tx` | Max units per single transaction. | Yes. Swig `TokenLimit`. |
+| `asset_caps[mint].max_per_day` | Max units in a rolling 24h window. | Yes. Swig `TokenRecurringLimit`. |
+| `allowed_programs` | Program IDs the agent may invoke. | Yes. Swig `ProgramScope`. |
+| `blocked_destinations` | Addresses the agent may never send to. | No. Off-chain only. |
+| `max_actions_per_minute` | Rate limit on guarded calls. | No. Off-chain only. |
+| `expires_at` | Auto-revoke at this ISO timestamp. | No. Off-chain trigger. |
 
-Amounts are in human units (e.g. `50` USDC, `0.5` SOL). The SDK and dashboard handle conversion to base units.
+Amounts are in **human units**: `50` means 50 USDC, `0.5` means 0.5 SOL. The SDK and dashboard convert to base units when calling the chain.
 
 ## Two layers, one truth
 
-The SDK calls `/sdk/agent_check` before signing. If the off-chain check denies, the action never reaches Solana — fast feedback, no wasted fee.
+```
+your agent code
+  │
+  └── altheia.guard(action, fn)
+        │
+        ├── 1) /sdk/agent_check  → off-chain pre-flight
+        │     │
+        │     ├── allowed → run fn()
+        │     └── denied  → throw PolicyDeniedError (fn never runs)
+        │
+        └── fn() signs the tx with the session keypair
+              │
+              └── Swig session-key scope enforces the same caps on-chain
+                    └── over-cap tx fails at signing, no fee burned
+```
 
-If somehow the off-chain check misses or the SDK is misconfigured, Swig's on-chain scope is the floor. The session key cannot sign anything outside its programmed limits, regardless of what the SDK thinks.
+The pre-flight is fast feedback. The on-chain scope is the one you trust. If the SDK is misconfigured or the backend is unreachable, Swig still refuses to sign anything outside its programmed limits.
 
-This is why `failureMode: "open"` is safe by default. The on-chain layer catches over-cap actions even when the off-chain check is unreachable.
+This is why `failureMode: "open"` is the SDK default. The on-chain floor catches over-cap actions even when the off-chain check is unavailable. For agents that move real money, set `failureMode: "closed"` so denials halt instead of swinging.
 
 ## Updating a policy
 
-Edit on the agent detail page. You sign one transaction. The policy commitment on-chain updates, the Swig session-key constraints update, and the new policy takes effect immediately. Old in-flight transactions are not retroactively blocked.
+Edit on the agent detail page. You sign one transaction. The on-chain policy commitment updates, the Swig scope updates, and the new policy takes effect on the next `guard()` call. Transactions already in-flight are not retroactively blocked.
 
 <Card title="Next: kill switch" icon="arrow-right" href="/concepts/kill-switch" horizontal>
-  Pause, revoke, and what each one does to the on-chain state.
+  Pause and revoke, and what each does to the on-chain state.
 </Card>

@@ -45,6 +45,12 @@
               "sdk/check",
               "sdk/report"
             ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "troubleshooting"
+            ]
           }
         ]
       }
