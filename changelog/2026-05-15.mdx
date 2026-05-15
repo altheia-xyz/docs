@@ -1,0 +1,23 @@
+---
+title: "Week of May 15, 2026"
+description: "First public npm release, mainnet on-chain policies, and new mainnet swap examples."
+---
+
+## New
+
+- **SDK published to npm under the `@altheia-xyz/*` scope.** Install with `npm i @altheia-xyz/sdk` (Apache-2.0, public). The `types`, `sdk`, `mcp`, and `solana-agent-kit` packages are all live. See the [Integrate the SDK](/guides/integrate-sdk) guide.
+- **Full policies are now stored on-chain.** Agent accounts persist your token caps, allowed programs (up to 8), and blocked destinations (up to 4) directly on Solana — not just a hash. You can inspect any agent's policy with a single `getAccountInfo` call, no backend required. Learn more in [Policies](/concepts/policies).
+- **Jupiter swap agent example.** A real mainnet Jupiter v6 swap wrapped by `altheia.guard`, showing the full trust contract end-to-end: under-cap swaps execute with a Solscan-linkable signature, over-cap requests throw `PolicyDeniedError` before the keypair ever signs.
+- **Orca swap agent example.** A 6-scenario walkthrough covering allow, deny, kill-switch, and recovery flows. See the [Orca swap agent](/guides/orca-swap-example) guide.
+
+## Updates
+
+- **API endpoint defaults to `https://api.altheia.xyz`.** The `endpoint` option is now optional in `Altheia({ ... })`; localhost defaults have been removed across all packages.
+- **Transaction signatures flow through `altheia.guard`.** The on-chain `tx_signature` is now threaded into reports automatically so every audit entry links back to the underlying transaction.
+- **`solana-agent-kit` adapter is mainnet-only.** The `trade()` helper uses the mainnet Jupiter API directly; devnet is not supported by the upstream SAK.
+- **Package homepages point to [docs.altheia.xyz](https://docs.altheia.xyz).** READMEs across all packages now lead with the docs link.
+
+## Fixes
+
+- Resolved a pnpm version conflict in CI by pinning the `packageManager` field; clean installs no longer fail on fresh clones.
+- The `mcp` package now exposes an explicit `types` entry so editors pick up type hints on first import.
